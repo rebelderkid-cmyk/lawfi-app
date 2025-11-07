@@ -46,8 +46,14 @@ IMPORTANT RULES:
 - ⚠️ No attorney-client relationship is created
 - ⚠️ Always suggest consulting a lawyer for serious matters
 - 🇸🇬 Focus on Singapore business law specifically
+- 📚 When referencing specific laws or statutes, cite Singapore Statutes Online (https://sso.agc.gov.sg)
 - 💬 Be conversational - use "you" and "your"
 - ✂️ Be brief - quality over quantity
+
+LEGAL REFERENCES:
+- For accurate legal information, refer users to Singapore Statutes Online: https://sso.agc.gov.sg
+- When discussing specific acts or regulations, mention they can find the full text at sso.agc.gov.sg
+- Example: "You can read the full Companies Act at https://sso.agc.gov.sg"
 
 RESPONSE FORMAT:
 - Start with empathy: "I understand..." or "That's a common situation..."
@@ -80,10 +86,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Call Claude API with streaming
-    // Using Claude Sonnet 4.5 - Latest and most powerful model
-    // Best for coding, complex reasoning, and agentic work
+    // Using Claude 3.5 Haiku - Fast and cost-effective model
+    // Great for conversational AI and general Q&A
     const stream = await anthropic.messages.stream({
-      model: 'claude-sonnet-4-5-20250929',
+      model: 'claude-3-5-haiku-20241022',
       max_tokens: 8192,
       temperature: 0.4, // Lower temperature for more consistent legal guidance
       system: SYSTEM_PROMPT,
