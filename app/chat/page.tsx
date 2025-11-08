@@ -1,7 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSession, signOut } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import ChatSidebar from '@/app/components/ChatSidebar';
 
 // Type for a chat message
 type Message = {
@@ -12,9 +15,99 @@ type Message = {
 };
 
 export default function ChatPage() {
+  const { data: session, status } = useSession();
+  const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingChat, setIsLoadingChat] = useState(false);
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const [sidebarKey, setSidebarKey] = useState<number>(0);
+
+  // Create a new chat when component mounts (only for authenticated users)
+  useEffect(() => {
+    if (session && !currentChatId) {
+      createNewChat();
+    }
+  }, [session, currentChatId]);
+
+  // Function to create a new chat
+  const createNewChat = async () => {
+    try {
+      // Clear current messages
+      setMessages([]);
+      setCurrentChatId(null);
+
+      const response = await fetch('/api/chats', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'New Conversation' })
+      });
+
+      if (response.ok) {
+        const { chat } = await response.json();
+        setCurrentChatId(chat.id);
+        // Trigger sidebar refresh
+        setSidebarKey(prev => prev + 1);
+      }
+    } catch (error) {
+      console.error('Failed to create chat:', error);
+    }
+  };
+
+  // Function to load a specific chat
+  const loadChat = async (chatId: string) => {
+    // Don't reload if already on this chat
+    if (chatId === currentChatId) return;
+
+    setIsLoadingChat(true);
+    try {
+      const response = await fetch(`/api/chats/${chatId}`);
+      if (response.ok) {
+        const { chat } = await response.json();
+        setCurrentChatId(chat.id);
+
+        // Convert messages to the Message type
+        const loadedMessages: Message[] = chat.messages.map((msg: any) => ({
+          id: msg.id,
+          role: msg.role,
+          content: msg.content,
+          timestamp: new Date(msg.createdAt)
+        }));
+
+        setMessages(loadedMessages);
+      }
+    } catch (error) {
+      console.error('Failed to load chat:', error);
+    } finally {
+      setIsLoadingChat(false);
+    }
+  };
+
+  // Function to save a message to the database (only for authenticated users)
+  const saveMessage = async (role: 'user' | 'assistant', content: string) => {
+    // Only save messages if user is authenticated
+    if (!session || !currentChatId) return;
+
+    try {
+      await fetch(`/api/chats/${currentChatId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role, content })
+      });
+    } catch (error) {
+      console.error('Failed to save message:', error);
+    }
+  };
+
+  // Show loading while checking authentication (only briefly)
+  if (status === 'loading') {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+      </div>
+    );
+  }
 
   // Handle sending a message
   const handleSend = async () => {
@@ -32,6 +125,9 @@ export default function ChatPage() {
     const currentInput = input;
     setInput('');
     setIsLoading(true);
+
+    // Save user message to database
+    await saveMessage('user', currentInput);
 
     try {
       // Prepare messages for API
@@ -107,6 +203,13 @@ export default function ChatPage() {
           }
         }
       }
+
+      // Save assistant message to database
+      if (assistantContent) {
+        await saveMessage('assistant', assistantContent);
+        // Refresh sidebar to update message count
+        setSidebarKey(prev => prev + 1);
+      }
     } catch (error) {
       console.error('Error:', error);
       // Show error message
@@ -125,7 +228,7 @@ export default function ChatPage() {
   };
 
   // Handle Enter key press
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -133,9 +236,19 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-[#fcfbf8]">
-      {/* Header */}
-      <header className="bg-white/70 backdrop-blur-xl border-b border-gray-200/50 px-6 py-4 sticky top-0 z-10 animate-slide-down">
+    <div className="flex h-screen bg-[#fcfbf8]">
+      {/* Sidebar */}
+      <ChatSidebar
+        currentChatId={currentChatId}
+        onChatSelect={loadChat}
+        onNewChat={createNewChat}
+        key={sidebarKey}
+      />
+
+      {/* Main Content */}
+      <div className="flex flex-col flex-1 h-screen">
+        {/* Header */}
+        <header className="bg-white/70 backdrop-blur-xl border-b border-gray-200/50 px-6 py-4 sticky top-0 z-10 animate-slide-down">
         <div className="max-w-5xl mx-auto flex items-center justify-between">
           <Link href="/" className="flex items-center space-x-3 group">
             <div className="w-10 h-10 bg-gradient-to-br from-gray-900 to-gray-700 rounded-xl flex items-center justify-center shadow-lg group-hover:shadow-xl transition-all duration-300 group-hover:scale-105">
@@ -144,10 +257,56 @@ export default function ChatPage() {
             <span className="text-xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">LawFI</span>
           </Link>
           <div className="flex items-center space-x-4">
-            <div className="text-sm text-gray-600 font-medium">
-              AI Legal Assistant
-            </div>
-            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+            {session ? (
+              <>
+                {/* User Profile */}
+                <div className="flex items-center space-x-3">
+                  {session.user?.image ? (
+                    <img
+                      src={session.user.image}
+                      alt={session.user.name || 'User'}
+                      className="w-8 h-8 rounded-full ring-2 ring-gray-200"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
+                      <span className="text-white text-sm font-semibold">
+                        {session.user?.name?.charAt(0) || 'U'}
+                      </span>
+                    </div>
+                  )}
+                  <div className="hidden md:block">
+                    <div className="text-sm font-medium text-gray-900">{session.user?.name}</div>
+                    <div className="text-xs text-gray-500">{session.user?.email}</div>
+                  </div>
+                </div>
+
+                {/* Sign Out Button */}
+                <button
+                  onClick={() => signOut({ callbackUrl: '/login' })}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors duration-200"
+                >
+                  Sign Out
+                </button>
+              </>
+            ) : (
+              <>
+                {/* Guest Badge */}
+                <div className="flex items-center space-x-2 px-3 py-1.5 bg-gray-100 rounded-lg">
+                  <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                  </svg>
+                  <span className="text-sm font-medium text-gray-700">Guest Mode</span>
+                </div>
+
+                {/* Sign In Button */}
+                <button
+                  onClick={() => router.push('/login')}
+                  className="px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg"
+                >
+                  Sign In
+                </button>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -166,10 +325,40 @@ export default function ChatPage() {
         </div>
       </div>
 
+      {/* Guest Mode Notice */}
+      {!session && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-blue-200/50 px-6 py-2.5 animate-slide-down-delayed">
+          <div className="max-w-5xl mx-auto flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <div className="w-5 h-5 bg-blue-500/10 rounded-full flex items-center justify-center flex-shrink-0">
+                <svg className="w-3 h-3 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <p className="text-xs text-blue-800">
+                <strong>Guest Mode:</strong> Your chat history will not be saved. Sign in to save your conversations.
+              </p>
+            </div>
+            <button
+              onClick={() => router.push('/login')}
+              className="px-3 py-1 text-xs font-medium text-blue-700 hover:text-blue-900 bg-blue-100 hover:bg-blue-200 rounded-md transition-colors duration-200"
+            >
+              Sign In
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto px-6 py-8 scroll-smooth">
         <div className="max-w-5xl mx-auto space-y-6">
-          {messages.length === 0 ? (
+          {isLoadingChat ? (
+            // Loading Chat
+            <div className="flex flex-col items-center justify-center py-20">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+              <p className="text-gray-600 font-medium">Loading conversation...</p>
+            </div>
+          ) : messages.length === 0 ? (
             // Welcome Screen
             <div className="text-center py-12 animate-fade-in">
               <div className="w-16 h-16 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl animate-bounce-subtle">
@@ -253,7 +442,7 @@ export default function ChatPage() {
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyDown}
                 placeholder="Type your legal question here..."
                 className="w-full pl-12 pr-4 py-4 bg-gray-50 border-2 border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white resize-none text-gray-900 placeholder:text-gray-400 transition-all duration-200"
                 rows={2}
@@ -292,6 +481,7 @@ export default function ChatPage() {
             </div>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );
